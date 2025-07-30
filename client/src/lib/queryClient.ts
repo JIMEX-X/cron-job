@@ -20,7 +20,9 @@ export async function apiRequest(
           "x-api-key": `86484wuhihae873haoq-sjdb.jaoan`,
           // "x-api-key": `${import.meta.env.VITE_CRON_API_KEY}`,
         }
-      : {},
+      : {
+          "x-api-key": `86484wuhihae873haoq-sjdb.jaoan`,
+        },
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });
