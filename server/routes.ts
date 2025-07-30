@@ -143,7 +143,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const job = await storage.createCronJob(validatedData);
-      startJob(job.id, job.url, job.schedule, job.cronSecret, job.body);
+      startJob(
+        job.id,
+        job.url,
+        job.schedule,
+        job.cronSecret as string,
+        job.body
+      );
 
       // Remove sensitive data from response
       const { cronSecret, ...safeJob } = job;
@@ -180,7 +186,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           updatedJob.id,
           updatedJob.url,
           updatedJob.schedule,
-          updatedJob.cronSecret,
+          updatedJob.cronSecret as string,
           updatedJob.body
         );
       }
@@ -245,7 +251,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const jobs = await storage.getAllCronJobs();
     jobs.forEach((job) => {
       if (job.isActive) {
-        startJob(job.id, job.url, job.schedule, job.cronSecret, job.body);
+        startJob(
+          job.id,
+          job.url,
+          job.schedule,
+          job.cronSecret as string,
+          job.body
+        );
       }
     });
     console.log(
@@ -256,7 +268,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Self-ping to prevent sleep
   const PING_INTERVAL = 14 * 60 * 1000; // 14 minutes
   const setupSelfPing = () => {
-    const serverUrl = process.env.SERVER_URL || `http://localhost:5000`;
+    const serverUrl =
+      process.env.SERVER_URL || `https://cron-job-qm0w.onrender.com`;
     setInterval(async () => {
       try {
         await fetch(`${serverUrl}/api/health`);
