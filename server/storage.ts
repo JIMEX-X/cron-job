@@ -39,7 +39,7 @@ export class DbStorage implements IStorage {
     if (!process.env.DATABASE_URL) {
       throw new Error("DATABASE_URL environment variable is not set");
     }
-    const pool = new Pool({
+    const pool = new Pool.Pool({
       connectionString: process.env.DATABASE_URL,
     });
     this.db = drizzle(pool, { schema: { cronJobs, executionLogs } });
