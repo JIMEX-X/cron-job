@@ -1,137 +1,178 @@
-import { type CronJob, type InsertCronJob, type ExecutionLog, type InsertExecutionLog, type JobStats, type HealthStatus } from "@shared/schema";
-import { randomUUID } from "crypto";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
+import { eq, count, desc, gte, lt, sql } from "drizzle-orm";
+import { cronJobs, executionLogs } from "@shared/schema";
+import {
+  type CronJob,
+  type InsertCronJob,
+  type ExecutionLog,
+  type InsertExecutionLog,
+  type JobStats,
+  type HealthStatus,
+} from "@shared/schema";
 
 export interface IStorage {
   // Cron Jobs
   getCronJob(id: string): Promise<CronJob | undefined>;
   getAllCronJobs(): Promise<CronJob[]>;
   createCronJob(job: InsertCronJob): Promise<CronJob>;
-  updateCronJob(id: string, updates: Partial<CronJob>): Promise<CronJob | undefined>;
+  updateCronJob(
+    id: string,
+    updates: Partial<CronJob>
+  ): Promise<CronJob | undefined>;
   deleteCronJob(id: string): Promise<boolean>;
-  
+
   // Execution Logs
   createExecutionLog(log: InsertExecutionLog): Promise<ExecutionLog>;
   getExecutionLogs(jobId?: string, limit?: number): Promise<ExecutionLog[]>;
   clearOldLogs(days: number): Promise<number>;
-  
+
   // Analytics
   getJobStats(): Promise<JobStats>;
   getHealthStatus(): Promise<HealthStatus>;
 }
 
-export class MemStorage implements IStorage {
-  private cronJobs: Map<string, CronJob>;
-  private executionLogs: Map<string, ExecutionLog>;
+export class DbStorage implements IStorage {
+  private db;
 
   constructor() {
-    this.cronJobs = new Map();
-    this.executionLogs = new Map();
+    if (!process.env.DATABASE_URL) {
+      throw new Error("DATABASE_URL environment variable is not set");
+    }
+    const pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+    });
+    this.db = drizzle(pool, { schema: { cronJobs, executionLogs } });
   }
 
   // Cron Jobs
   async getCronJob(id: string): Promise<CronJob | undefined> {
-    return this.cronJobs.get(id);
+    const result = await this.db
+      .select()
+      .from(cronJobs)
+      .where(eq(cronJobs.id, id))
+      .limit(1);
+    return result[0];
   }
 
   async getAllCronJobs(): Promise<CronJob[]> {
-    return Array.from(this.cronJobs.values());
+    return this.db.select().from(cronJobs);
   }
 
   async createCronJob(job: InsertCronJob): Promise<CronJob> {
-    const cronJob: CronJob = {
-      ...job,
-      createdAt: new Date(),
-      createdBy: "JIMEX-X",
-      isActive: true,
-    };
-    this.cronJobs.set(job.id, cronJob);
-    return cronJob;
+    const [newJob] = await this.db.insert(cronJobs).values(job).returning();
+    return newJob;
   }
 
-  async updateCronJob(id: string, updates: Partial<CronJob>): Promise<CronJob | undefined> {
-    const existing = this.cronJobs.get(id);
-    if (!existing) return undefined;
-    
-    const updated = { ...existing, ...updates };
-    this.cronJobs.set(id, updated);
+  async updateCronJob(
+    id: string,
+    updates: Partial<CronJob>
+  ): Promise<CronJob | undefined> {
+    const [updated] = await this.db
+      .update(cronJobs)
+      .set(updates)
+      .where(eq(cronJobs.id, id))
+      .returning();
     return updated;
   }
 
   async deleteCronJob(id: string): Promise<boolean> {
-    return this.cronJobs.delete(id);
+    const result = await this.db
+      .delete(cronJobs)
+      .where(eq(cronJobs.id, id))
+      .returning({ id: cronJobs.id });
+    return result.length > 0;
   }
 
   // Execution Logs
   async createExecutionLog(log: InsertExecutionLog): Promise<ExecutionLog> {
-    const executionLog: ExecutionLog = {
-      id: randomUUID(),
-      ...log,
-      timestamp: new Date(),
-    };
-    this.executionLogs.set(executionLog.id, executionLog);
-    return executionLog;
+    const [newLog] = await this.db
+      .insert(executionLogs)
+      .values(log)
+      .returning();
+    return newLog;
   }
 
-  async getExecutionLogs(jobId?: string, limit: number = 100): Promise<ExecutionLog[]> {
-    let logs = Array.from(this.executionLogs.values());
-    
+  async getExecutionLogs(jobId?: string, limit = 100): Promise<ExecutionLog[]> {
+    const query = this.db
+      .select()
+      .from(executionLogs)
+      .orderBy(desc(executionLogs.timestamp))
+      .limit(limit);
     if (jobId) {
-      logs = logs.filter(log => log.jobId === jobId);
+      query.where(eq(executionLogs.jobId, jobId));
     }
-    
-    return logs
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      .slice(0, limit);
+    return query;
   }
 
   async clearOldLogs(days: number): Promise<number> {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - days);
-    
-    let cleared = 0;
-    for (const [id, log] of this.executionLogs.entries()) {
-      if (new Date(log.timestamp) < cutoff) {
-        this.executionLogs.delete(id);
-        cleared++;
-      }
-    }
-    
-    return cleared;
+
+    const result = await this.db
+      .delete(executionLogs)
+      .where(lt(executionLogs.timestamp, cutoff));
+    return result.rowCount ?? 0;
   }
 
   // Analytics
   async getJobStats(): Promise<JobStats> {
-    const jobs = Array.from(this.cronJobs.values());
+    const totalJobsPromise = this.db.select({ value: count() }).from(cronJobs);
+    const activeJobsPromise = this.db
+      .select({ value: count() })
+      .from(cronJobs)
+      .where(eq(cronJobs.isActive, true));
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
-    const logsToday = Array.from(this.executionLogs.values()).filter(
-      log => new Date(log.timestamp) >= today
-    );
-    
-    const successfulToday = logsToday.filter(log => log.status === 'success').length;
-    const successRate = logsToday.length > 0 ? (successfulToday / logsToday.length) * 100 : 100;
-    
+
+    const executionsTodayPromise = this.db
+      .select({
+        total: count(),
+        successful: count(
+          sql`case when ${executionLogs.status} = 'success' then 1 else null end`
+        ),
+      })
+      .from(executionLogs)
+      .where(gte(executionLogs.timestamp, today));
+
+    const [[{ value: totalJobs }], [{ value: activeJobs }], [executions]] =
+      await Promise.all([
+        totalJobsPromise,
+        activeJobsPromise,
+        executionsTodayPromise,
+      ]);
+
+    const successRate =
+      executions.total > 0
+        ? (Number(executions.successful) / executions.total) * 100
+        : 100;
+
     return {
-      totalJobs: jobs.length,
-      activeJobs: jobs.filter(job => job.isActive).length,
-      executionsToday: logsToday.length,
+      totalJobs,
+      activeJobs,
+      executionsToday: executions.total,
       successRate: Math.round(successRate * 10) / 10,
     };
   }
 
   async getHealthStatus(): Promise<HealthStatus> {
-    const activeJobs = Array.from(this.cronJobs.values()).filter(job => job.isActive).length;
-    
+    const [{ value: activeJobs }] = await this.db
+      .select({ value: count() })
+      .from(cronJobs)
+      .where(eq(cronJobs.isActive, true));
+
     return {
       status: "healthy",
       timestamp: new Date().toISOString(),
       activeJobs,
-      memoryUsage: `${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`,
+      memoryUsage: `${Math.round(
+        process.memoryUsage().heapUsed / 1024 / 1024
+      )}MB`,
       cpuUsage: "12%",
       lastPing: "2 min ago",
     };
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DbStorage();
