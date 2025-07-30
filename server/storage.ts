@@ -36,11 +36,12 @@ export class DbStorage implements IStorage {
   private db;
 
   constructor() {
-    if (!process.env.DATABASE_URL) {
-      throw new Error("DATABASE_URL environment variable is not set");
-    }
+    // if (!process.env.DATABASE_URL) {
+    //   throw new Error("DATABASE_URL environment variable is not set");
+    // }
     const pool = new Pool.Pool({
-      connectionString: process.env.DATABASE_URL,
+      connectionString:
+        "postgresql://ai-anamme_owner:npg_rmzshp0uQvW6@ep-delicate-bonus-abnt0n7o-pooler.eu-west-2.aws.neon.tech/ai-anamme?sslmode=require&channel_binding=require",
     });
     this.db = drizzle(pool, { schema: { cronJobs, executionLogs } });
   }
