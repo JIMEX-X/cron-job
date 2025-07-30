@@ -51,11 +51,11 @@ app.use((req, res, next) => {
     }
   });
 
-  // if (app.get("env") === "development") {
-  // } else {
-  //   serveStatic(app);
-  // }
-  await setupVite(app, server);
+  if (app.get("env") === "development") {
+    await setupVite(app, server);
+  } else {
+    serveStatic(app);
+  }
 
   const port = Number.parseInt(process.env.PORT || "5000", 10);
   const host = process.env.HOST || "0.0.0.0";
